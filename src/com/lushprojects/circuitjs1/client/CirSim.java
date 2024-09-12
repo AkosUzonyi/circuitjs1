@@ -26,6 +26,7 @@ package com.lushprojects.circuitjs1.client;
 
 import java.util.Vector;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Random;
@@ -70,6 +71,8 @@ import com.google.gwt.http.client.RequestBuilder;
 import com.google.gwt.http.client.RequestCallback;
 import com.google.gwt.user.client.ui.MenuBar;
 import com.google.gwt.user.client.Command;
+import com.google.gwt.user.client.DOM;
+import com.google.gwt.user.client.Element;
 import com.google.gwt.user.client.Event;
 import com.google.gwt.user.client.Timer;
 import com.google.gwt.user.client.Window;
@@ -81,7 +84,9 @@ import com.google.gwt.event.dom.client.DoubleClickHandler;
 import com.google.gwt.event.dom.client.DoubleClickEvent;
 import com.google.gwt.dom.client.CanvasElement;
 import com.google.gwt.dom.client.Document;
+import com.google.gwt.dom.client.MetaElement;
 import com.google.gwt.dom.client.NativeEvent;
+import com.google.gwt.dom.client.NodeList;
 import com.google.gwt.user.client.ui.MenuItem;
 import com.google.gwt.safehtml.shared.SafeHtmlUtils;
 import com.google.gwt.storage.client.Storage;
@@ -95,6 +100,7 @@ import com.google.gwt.user.client.Window.ClosingEvent;
 import com.google.gwt.user.client.Window.Navigator;
 import com.google.gwt.event.logical.shared.ResizeEvent;
 import com.google.gwt.event.logical.shared.ResizeHandler;
+import com.google.gwt.user.client.DOM;
 
 public class CirSim implements MouseDownHandler, MouseMoveHandler, MouseUpHandler,
 ClickHandler, DoubleClickHandler, ContextMenuHandler, NativePreviewHandler,
@@ -144,11 +150,15 @@ MouseOutHandler, MouseWheelHandler {
     MenuItem combineAllItem;
     MenuItem separateAllItem;
     MenuBar mainMenuBar;
+	boolean hideMenu = false;
     MenuBar selectScopeMenuBar;
+    Vector<MenuItem> selectScopeMenuItems;
     MenuBar subcircuitMenuBar[];
     MenuItem scopeRemovePlotMenuItem;
     MenuItem scopeSelectYMenuItem;
     ScopePopupMenu scopePopupMenu;
+    Element sidePanelCheckboxLabel;
+   
     String lastCursorStyle;
     boolean mouseWasOverSplitter = false;
 
@@ -184,6 +194,7 @@ MouseOutHandler, MouseWheelHandler {
     double t;
     int pause = 10;
     int scopeSelected = -1;
+    int scopeMenuSelected = -1;
     int menuScope = -1;
     int menuPlot = -1;
     int hintType = -1, hintItem1, hintItem2;
@@ -203,6 +214,7 @@ MouseOutHandler, MouseWheelHandler {
     // incremented each time we advance t by maxTimeStep
     int timeStepCount;
 
+    double minFrameRate = 20;
     boolean adjustTimeStep;
     boolean developerMode;
     static final int HINT_LC = 1;
@@ -296,14 +308,26 @@ MouseOutHandler, MouseWheelHandler {
             setCanvasSize();
     }
 
+    native boolean isMobile(Element element) /*-{
+	if (!element)
+	    return false;
+	var style = getComputedStyle(element);
+	return style.display != 'none';
+    }-*/;
+    
     public void setCanvasSize(){
     	int width, height;
     	width=(int)RootLayoutPanel.get().getOffsetWidth();
     	height=(int)RootLayoutPanel.get().getOffsetHeight();
-    	height=height-MENUBARHEIGHT;
-    	width=width-VERTICALPANELWIDTH;
+    	height=height-(hideMenu?0:MENUBARHEIGHT);
+
+    	//not needed on mobile since the width of the canvas' container div is set to 100% in ths CSS file
+    	if (!isMobile(sidePanelCheckboxLabel))
+    	    width=width-VERTICALPANELWIDTH;
+
     	width = Math.max(width, 0);   // avoid exception when setting negative width
     	height = Math.max(height, 0);
+    	
 		if (cv != null) {
 			cv.setWidth(width + "PX");
 			cv.setHeight(height + "PX");
@@ -353,14 +377,20 @@ MouseOutHandler, MouseWheelHandler {
     
     public void init() {
 
+	//sets the meta tag to allow the css media queries to work
+	MetaElement meta = Document.get().createMetaElement();
+	meta.setName("viewport");
+	meta.setContent("width=device-width");
+	NodeList<com.google.gwt.dom.client.Element> node = Document.get().getElementsByTagName("head");
+	node.getItem(0).appendChild(meta);
 
+	
 	boolean printable = false;
 	boolean convention = true;
 	boolean euroRes = false;
 	boolean usRes = false;
 	boolean running = true;
 	boolean hideSidebar = false;
-	boolean hideMenu = false;
 	boolean noEditing = false;
 	boolean mouseWheelEdit = false;
 	MenuBar m;
@@ -371,6 +401,7 @@ MouseOutHandler, MouseWheelHandler {
 	QueryParameters qp = new QueryParameters();
 	String positiveColor = null;
 	String negativeColor = null;
+	String neutralColor = null;
 	String selectColor = null;
 	String currentColor = null;
 	String mouseModeReq = null;
@@ -404,6 +435,7 @@ MouseOutHandler, MouseWheelHandler {
 	    mouseWheelEdit = qp.getBooleanValue("mouseWheelEdit", getOptionFromStorage("mouseWheelEdit", true));
 	    positiveColor = qp.getValue("positiveColor");
 	    negativeColor = qp.getValue("negativeColor");
+	    neutralColor = qp.getValue("neutralColor");
 	    selectColor = qp.getValue("selectColor");
 	    currentColor = qp.getValue("currentColor");
 	    mouseModeReq = qp.getValue("mouseMode");
@@ -456,7 +488,8 @@ MouseOutHandler, MouseWheelHandler {
 	exportAsTextItem = iconMenuItem("export", "Export As Text...", new MyCommand("file","exportastext"));
 	fileMenuBar.addItem(exportAsTextItem);
 	fileMenuBar.addItem(iconMenuItem("export", "Export As Image...", new MyCommand("file","exportasimage")));
-	fileMenuBar.addItem(iconMenuItem("export", "Export As SVG...", new MyCommand("file","exportassvg")));
+	fileMenuBar.addItem(iconMenuItem("export", "Copy Circuit Image to Clipboard", new MyCommand("file","copypng")));
+	fileMenuBar.addItem(iconMenuItem("export", "Export As SVG...", new MyCommand("file","exportassvg")));    	
 	fileMenuBar.addItem(iconMenuItem("microchip", "Create Subcircuit...", new MyCommand("file","createsubcircuit")));
 	fileMenuBar.addItem(iconMenuItem("magic", "Find DC Operating Point", new MyCommand("file", "dcanalysis")));
 	recoverItem = iconMenuItem("back-in-time", "Recover Auto-Save", new MyCommand("file","recover"));
@@ -481,6 +514,21 @@ MouseOutHandler, MouseWheelHandler {
 	menuBar = new MenuBar();
 	menuBar.addItem(Locale.LS("File"), fileMenuBar);
 	verticalPanel=new VerticalPanel();
+
+	verticalPanel.getElement().addClassName("verticalPanel");
+	verticalPanel.getElement().setId("painel");
+	Element sidePanelCheckbox = DOM.createInputCheck();
+	sidePanelCheckboxLabel = DOM.createLabel();
+	sidePanelCheckboxLabel.addClassName("triggerLabel");
+	sidePanelCheckbox.setId("trigger");
+	sidePanelCheckboxLabel.setAttribute("for", "trigger" );
+	sidePanelCheckbox.addClassName("trigger");
+	Element topPanelCheckbox = DOM.createInputCheck(); 
+	Element topPanelCheckboxLabel = DOM.createLabel();
+	topPanelCheckbox.setId("toptrigger");
+	topPanelCheckbox.addClassName("toptrigger");
+	topPanelCheckboxLabel.addClassName("toptriggerlabel");
+	topPanelCheckboxLabel.setAttribute("for", "toptrigger");
 
 	// make buttons side by side if there's room
 	buttonPanel=(VERTICALPANELWIDTH == 166) ? new HorizontalPanel() : new VerticalPanel();
@@ -607,13 +655,20 @@ MouseOutHandler, MouseWheelHandler {
 	composeMainMenu(drawMenuBar, 1);
 	loadShortcuts();
 
+	DOM.appendChild(layoutPanel.getElement(), topPanelCheckbox);
+	DOM.appendChild(layoutPanel.getElement(), topPanelCheckboxLabel);	
 	if (!hideMenu)
 	    layoutPanel.addNorth(menuBar, MENUBARHEIGHT);
 
 	if (hideSidebar)
 	    VERTICALPANELWIDTH = 0;
-	else
+	else {
+		DOM.appendChild(layoutPanel.getElement(), sidePanelCheckbox);
+		DOM.appendChild(layoutPanel.getElement(), sidePanelCheckboxLabel);
 	    layoutPanel.addEast(verticalPanel, VERTICALPANELWIDTH);
+	}
+	menuBar.getElement().insertFirst(menuBar.getElement().getChild(1));
+	menuBar.getElement().getFirstChildElement().setAttribute("onclick", "document.getElementsByClassName('toptrigger')[0].checked = false");
 	RootLayoutPanel.get().add(layoutPanel);
 
 	cv =Canvas.createIfSupported();
@@ -646,12 +701,14 @@ MouseOutHandler, MouseWheelHandler {
 	    }
 	});
 
-	/*
+	
+/*
 	dumpMatrixButton = new Button("Dump Matrix");
 	dumpMatrixButton.addClickHandler(new ClickHandler() {
 	    public void onClick(ClickEvent event) { dumpMatrix = true; }});
 	verticalPanel.add(dumpMatrixButton);// IES for debugging
-	 */
+*/
+	
 
 	if (LoadFile.isSupported())
 	    verticalPanel.add(loadFileInput = new LoadFile(this));
@@ -706,7 +763,32 @@ MouseOutHandler, MouseWheelHandler {
 
 	elmMenuBar = new MenuBar(true);
 	elmMenuBar.setAutoOpen(true);
-	selectScopeMenuBar = new MenuBar(true);
+	selectScopeMenuBar = new MenuBar(true) {
+	    @Override
+	    
+	    // when mousing over scope menu item, select associated scope
+	    public void onBrowserEvent(Event event) {
+		int currentItem = -1;
+		int i;
+		for (i = 0; i != selectScopeMenuItems.size(); i++) {
+		    MenuItem item = selectScopeMenuItems.get(i);
+		    if (DOM.isOrHasChild(item.getElement(), DOM.eventGetTarget(event))) {
+			//MenuItem found here
+			currentItem = i;
+		    }
+		}
+		switch (DOM.eventGetType(event)) {
+		case Event.ONMOUSEOVER:
+		    scopeMenuSelected = currentItem; 
+		    break;              
+		case Event.ONMOUSEOUT:
+		    scopeMenuSelected = -1;
+		    break;              
+		}
+		super.onBrowserEvent(event);
+	    }
+	};
+	
 	elmMenuBar.addItem(elmEditMenuItem = new MenuItem(Locale.LS("Edit..."),new MyCommand("elm","edit")));
 	elmMenuBar.addItem(elmScopeMenuItem = new MenuItem(Locale.LS("View in New Scope"), new MyCommand("elm","viewInScope")));
 	elmMenuBar.addItem(elmFloatScopeMenuItem  = new MenuItem(Locale.LS("View in New Undocked Scope"), new MyCommand("elm","viewInFloatScope")));
@@ -721,7 +803,7 @@ MouseOutHandler, MouseWheelHandler {
 
 	scopePopupMenu = new ScopePopupMenu();
 
-	setColors(positiveColor, negativeColor, selectColor, currentColor);
+	setColors(positiveColor, negativeColor, neutralColor, selectColor, currentColor);
 
 	if (startCircuitText != null) {
 	    getSetupList(false);
@@ -778,13 +860,15 @@ MouseOutHandler, MouseWheelHandler {
 	setSimRunning(running);
     }
 
-    void setColors(String positiveColor, String negativeColor, String selectColor, String currentColor) {
+    void setColors(String positiveColor, String negativeColor, String neutralColor, String selectColor, String currentColor) {
         Storage stor = Storage.getLocalStorageIfSupported();
         if (stor != null) {
             if (positiveColor == null)
         	positiveColor = stor.getItem("positiveColor");
             if (negativeColor == null)
         	negativeColor = stor.getItem("negativeColor");
+            if (neutralColor == null)
+        	neutralColor = stor.getItem("neutralColor");
             if (selectColor == null)
         	selectColor = stor.getItem("selectColor");
             if (currentColor == null)
@@ -798,7 +882,9 @@ MouseOutHandler, MouseWheelHandler {
 	
 	if (negativeColor != null)
 	    CircuitElm.negativeColor = new Color(URL.decodeQueryString(negativeColor));
-	
+	if (neutralColor != null)
+	    CircuitElm.neutralColor = new Color(URL.decodeQueryString(neutralColor));
+
 	if (selectColor != null)
 	    CircuitElm.selectColor = new Color(URL.decodeQueryString(selectColor));
 	else
@@ -916,6 +1002,7 @@ MouseOutHandler, MouseWheelHandler {
 	cv.addEventListener("touchstart", function (e) {
         	mousePos = getTouchPos(cv, e);
   		var touch = e.touches[0];
+  		
   		var etype = "mousedown";
   		lastScale = 1;
   		clearTimeout(tmout);
@@ -932,6 +1019,7 @@ MouseOutHandler, MouseWheelHandler {
   		
   		var touch1 = e.touches[0];
   		var touch2 = e.touches[e.touches.length-1];
+  		lastScale = Math.hypot(touch1.clientX-touch2.clientX, touch1.clientY-touch2.clientY);
   		var mouseEvent = new MouseEvent(etype, {
     			clientX: .5*(touch1.clientX+touch2.clientX),
     			clientY: .5*(touch1.clientY+touch2.clientY)
@@ -949,12 +1037,13 @@ MouseOutHandler, MouseWheelHandler {
 	cv.addEventListener("touchmove", function (e) {
   		e.preventDefault();
   		clearTimeout(tmout);
-	        if (e.touches.length > 1) {
-	            sim.@com.lushprojects.circuitjs1.client.CirSim::zoomCircuit(D)(40*(Math.log(e.scale)-Math.log(lastScale)));
-	            lastScale = e.scale;
-	        }
   		var touch1 = e.touches[0];
   		var touch2 = e.touches[e.touches.length-1];
+	        if (e.touches.length > 1) {
+  		    var newScale = Math.hypot(touch1.clientX-touch2.clientX, touch1.clientY-touch2.clientY);
+	            sim.@com.lushprojects.circuitjs1.client.CirSim::zoomCircuit(D)(40*(Math.log(newScale)-Math.log(lastScale)));
+	            lastScale = newScale;
+	        }
   		var mouseEvent = new MouseEvent("mousemove", {
     			clientX: .5*(touch1.clientX+touch2.clientX),
     			clientY: .5*(touch1.clientY+touch2.clientY)
@@ -987,12 +1076,15 @@ MouseOutHandler, MouseWheelHandler {
     	passMenuBar.addItem(getClassCheckItem(Locale.LS("Add Switch"), "SwitchElm"));
     	passMenuBar.addItem(getClassCheckItem(Locale.LS("Add Push Switch"), "PushSwitchElm"));
     	passMenuBar.addItem(getClassCheckItem(Locale.LS("Add SPDT Switch"), "Switch2Elm"));
+    	passMenuBar.addItem(getClassCheckItem(Locale.LS("Add DPDT Switch"), "DPDTSwitchElm"));
     	passMenuBar.addItem(getClassCheckItem(Locale.LS("Add Make-Before-Break Switch"), "MBBSwitchElm"));
     	passMenuBar.addItem(getClassCheckItem(Locale.LS("Add Potentiometer"), "PotElm"));
     	passMenuBar.addItem(getClassCheckItem(Locale.LS("Add Transformer"), "TransformerElm"));
     	passMenuBar.addItem(getClassCheckItem(Locale.LS("Add Tapped Transformer"), "TappedTransformerElm"));
     	passMenuBar.addItem(getClassCheckItem(Locale.LS("Add Transmission Line"), "TransLineElm"));
     	passMenuBar.addItem(getClassCheckItem(Locale.LS("Add Relay"), "RelayElm"));
+    	passMenuBar.addItem(getClassCheckItem(Locale.LS("Add Relay Coil"), "RelayCoilElm"));
+    	passMenuBar.addItem(getClassCheckItem(Locale.LS("Add Relay Contact"), "RelayContactElm"));
     	passMenuBar.addItem(getClassCheckItem(Locale.LS("Add Memristor"), "MemristorElm"));
     	passMenuBar.addItem(getClassCheckItem(Locale.LS("Add Spark Gap"), "SparkGapElm"));
     	passMenuBar.addItem(getClassCheckItem(Locale.LS("Add Fuse"), "FuseElm"));
@@ -1000,6 +1092,7 @@ MouseOutHandler, MouseWheelHandler {
     	passMenuBar.addItem(getClassCheckItem(Locale.LS("Add Crystal"), "CrystalElm"));
     	passMenuBar.addItem(getClassCheckItem(Locale.LS("Add Photoresistor"), "LDRElm"));
     	passMenuBar.addItem(getClassCheckItem(Locale.LS("Add Thermistor"), "ThermistorNTCElm"));
+    	passMenuBar.addItem(getClassCheckItem(Locale.LS("Add Cross Switch"), "CrossSwitchElm"));
     	mainMenuBar.addItem(SafeHtmlUtils.fromTrustedString(CheckboxMenuItem.checkBoxHtml+Locale.LS("&nbsp;</div>Passive Components")), passMenuBar);
 
     	MenuBar inputMenuBar = new MenuBar(true);
@@ -1041,6 +1134,7 @@ MouseOutHandler, MouseWheelHandler {
     	outputMenuBar.addItem(getClassCheckItem(Locale.LS("Add LED Array"), "LEDArrayElm"));
     	outputMenuBar.addItem(getClassCheckItem(Locale.LS("Add Stop Trigger"), "StopTriggerElm"));
     	outputMenuBar.addItem(getClassCheckItem(Locale.LS("Add DC Motor"), "DCMotorElm"));
+    	outputMenuBar.addItem(getClassCheckItem(Locale.LS("Add 3-Phase Motor"), "ThreePhaseMotorElm"));
     	outputMenuBar.addItem(getClassCheckItem(Locale.LS("Add Wattmeter"), "WattmeterElm"));
     	mainMenuBar.addItem(SafeHtmlUtils.fromTrustedString(CheckboxMenuItem.checkBoxHtml+Locale.LS("&nbsp;</div>Outputs and Labels")), outputMenuBar);
     	
@@ -1086,6 +1180,7 @@ MouseOutHandler, MouseWheelHandler {
     	activeBlocMenuBar.addItem(getClassCheckItem(Locale.LS("Add Time Delay Relay"), "TimeDelayRelayElm"));
     	activeBlocMenuBar.addItem(getClassCheckItem(Locale.LS("Add LM317"), "CustomCompositeElm:~LM317-v2"));
     	activeBlocMenuBar.addItem(getClassCheckItem(Locale.LS("Add TL431"), "CustomCompositeElm:~TL431"));
+    	activeBlocMenuBar.addItem(getClassCheckItem(Locale.LS("Add Motor Protection Switch"), "MotorProtectionSwitchElm"));
     	activeBlocMenuBar.addItem(getClassCheckItem(Locale.LS("Add Subcircuit Instance"), "CustomCompositeElm"));
     	mainMenuBar.addItem(SafeHtmlUtils.fromTrustedString(CheckboxMenuItem.checkBoxHtml+Locale.LS("&nbsp;</div>Active Building Blocks")), activeBlocMenuBar);
     	
@@ -1150,7 +1245,7 @@ MouseOutHandler, MouseWheelHandler {
     	mainMenuBar.addItem(SafeHtmlUtils.fromTrustedString(CheckboxMenuItem.checkBoxHtml+Locale.LS("&nbsp;</div>Drag")), otherMenuBar);
 
     	mainMenuBar.addItem(mi=getClassCheckItem(Locale.LS("Select/Drag Sel"), "Select"));
-    	mi.setShortcut(Locale.LS("(space or Shift-drag)"));
+	mi.setShortcut(Locale.LS("(space or Shift-drag)"));
     }
     
     void composeSubcircuitMenu() {
@@ -1174,13 +1269,14 @@ MouseOutHandler, MouseWheelHandler {
     
     public void composeSelectScopeMenu(MenuBar sb) {
 	sb.clearItems();
+	selectScopeMenuItems = new Vector<MenuItem>();
 	for( int i = 0; i < scopeCount; i++) {
 	    String s, l;
 	    s = Locale.LS("Scope")+" "+ Integer.toString(i+1);
 	    l=scopes[i].getScopeLabelOrText();
 	    if (l!="")
 		s+=" ("+SafeHtmlUtils.htmlEscape(l)+")";
-	    sb.addItem(new MenuItem(s ,new MyCommand("elm", "addToScope"+Integer.toString(i))));
+	    selectScopeMenuItems.add(new MenuItem(s ,new MyCommand("elm", "addToScope"+Integer.toString(i))));
 	}
 	int c = countScopeElms();
 	for (int j = 0; j < c; j++) {
@@ -1189,8 +1285,10 @@ MouseOutHandler, MouseWheelHandler {
 	    l = getNthScopeElm(j).elmScope.getScopeLabelOrText();
 	    if (l!="")
 		s += " ("+SafeHtmlUtils.htmlEscape(l)+")";
-	    sb.addItem(new MenuItem(s, new MyCommand("elm", "addToScope"+Integer.toString(scopeCount+j))));
+	    selectScopeMenuItems.add(new MenuItem(s, new MyCommand("elm", "addToScope"+Integer.toString(scopeCount+j))));
 	}
+	for (MenuItem mi : selectScopeMenuItems)
+	    sb.addItem(mi);
     }
     
     public void setiFrameHeight() {
@@ -1205,7 +1303,7 @@ MouseOutHandler, MouseWheelHandler {
     					cumheight+=12;
     		}
     	}
-    	int ih=RootLayoutPanel.get().getOffsetHeight()-MENUBARHEIGHT-cumheight;
+    	int ih=RootLayoutPanel.get().getOffsetHeight()-(hideMenu?0:MENUBARHEIGHT)-cumheight;
     	if (ih<0)
     		ih=0;
     	iFrame.setHeight(ih+"px");
@@ -1680,6 +1778,14 @@ MouseOutHandler, MouseWheelHandler {
     }
     
     int oldScopeCount = -1;
+    
+    boolean scopeMenuIsSelected(Scope s) {
+	if (scopeMenuSelected < 0)
+	    return false;
+	if (scopeMenuSelected < scopeCount)
+	    return scopes[scopeMenuSelected] == s;
+	return getNthScopeElm(scopeMenuSelected-scopeCount).elmScope == s; 
+    }
     
     void setupScopes() {
     	int i;
@@ -2419,7 +2525,7 @@ MouseOutHandler, MouseWheelHandler {
 	    /*System.out.println("row " + i + " " + re.lsChanges + " " + re.rsChanges + " " +
 			       re.dropRow);*/
 	    
-//	    if (qp != -100) continue;   // uncomment this line to disable matrix simplification for debugging purposes
+	    //if (qp != -100) continue;   // uncomment this line to disable matrix simplification for debugging purposes
 	    
 	    if (re.lsChanges || re.dropRow || re.rsChanges)
 		continue;
@@ -2855,10 +2961,11 @@ MouseOutHandler, MouseWheelHandler {
 	
 	// keep track of iterations completed without convergence issues
 	int goodIterations = 100;
-	boolean goodIteration = true;
+	
+	int frameTimeLimit = (int) (1000/minFrameRate);
 	
 	for (iter = 1; ; iter++) {
-	    if (goodIterations >= 3 && timeStep < maxTimeStep && goodIteration) {
+	    if (goodIterations >= 3 && timeStep < maxTimeStep) {
 		// things are going well, double the time step
 		timeStep = Math.min(timeStep*2, maxTimeStep);
 		console("timestep up = " + timeStep + " at " + t);
@@ -2947,13 +3054,12 @@ MouseOutHandler, MouseWheelHandler {
 	    }
 	    if (subiter > 5 || timeStep < maxTimeStep)
 		console("converged after " + subiter + " iterations, timeStep = " + timeStep);
-	    if (subiter < 3 && goodIteration)
+	    if (subiter < 3)
 		goodIterations++;
 	    else
 		goodIterations = 0;
 	    t += timeStep;
 	    timeStepAccum += timeStep;
-	    goodIteration = true;
 	    if (timeStepAccum >= maxTimeStep) {
 		timeStepAccum -= maxTimeStep;
 		timeStepCount++;
@@ -2975,8 +3081,8 @@ MouseOutHandler, MouseWheelHandler {
 	    tm = System.currentTimeMillis();
 	    lit = tm;
 	    // Check whether enough time has elapsed to perform an *additional* iteration after
-	    // those we have already completed.  But limit total computation time to 50ms (20fps)
-	    if ((timeStepCount-timeStepCountAtFrameStart)*1000 >= steprate*(tm-lastIterTime) || (tm-lastFrameTime > 50))
+	    // those we have already completed.  But limit total computation time to 50ms (20fps) by default
+	    if ((timeStepCount-timeStepCountAtFrameStart)*1000 >= steprate*(tm-lastIterTime) || (tm-lastFrameTime > frameTimeLimit))
 		break;
 	    if (!simRunning)
 		break;
@@ -3168,6 +3274,11 @@ MouseOutHandler, MouseWheelHandler {
     	}
     	if (item=="exportasimage")
 		doExportAsImage();
+    	if (item=="copypng") {
+		doImageToClipboard();
+    		if (contextPanel!=null)
+			contextPanel.hide();
+    	}
     	if (item=="exportassvg")
 		doExportAsSVG();
     	if (item=="createsubcircuit")
@@ -3245,11 +3356,11 @@ MouseOutHandler, MouseWheelHandler {
     	if (item=="separateAll")
 		separateAll();
     	if (item=="zoomin")
-    	    zoomCircuit(20);
+    	    zoomCircuit(20, true);
     	if (item=="zoomout")
-    	    zoomCircuit(-20);
+    	    zoomCircuit(-20, true);
     	if (item=="zoom100")
-    	    setCircuitScale(1);
+    	    setCircuitScale(1, true);
     	if (menu=="elm" && item=="edit")
     		doEdit(menuElm);
     	if (item=="delete") {
@@ -3288,7 +3399,7 @@ MouseOutHandler, MouseWheelHandler {
     	    needAnalyze();
 	}
     	
-    	if (item.substring(0,10)=="addToScope" && menuElm != null) {
+    	if (item.startsWith("addToScope") && menuElm != null) {
     	    int n;
     	    n = Integer.parseInt(item.substring(10));
     	    if (n < scopeCount + countScopeElms()) {
@@ -3297,6 +3408,7 @@ MouseOutHandler, MouseWheelHandler {
     		else
     		    getNthScopeElm(n-scopeCount).elmScope.addElm(menuElm);
     	    }
+    	    scopeMenuSelected = -1;
     	}
     	
     	if (menu=="scopepop") {
@@ -3571,6 +3683,19 @@ MouseOutHandler, MouseWheelHandler {
     	dialogShowing = new ExportAsImageDialog(CAC_IMAGE);
     	dialogShowing.show();
     }
+
+    private static native void clipboardWriteImage(CanvasElement cv) /*-{
+	cv.toBlob(function(blob) {
+	    var promise = parent.navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+	    promise.then(function(x) { console.log(x); });
+	});
+    }-*/;
+
+    void doImageToClipboard()
+    {
+	Canvas cv = CirSim.theSim.getCircuitAsCanvas(CAC_IMAGE);
+	clipboardWriteImage(cv.getCanvasElement());
+    }
     
     void doCreateSubcircuit()
     {
@@ -3690,7 +3815,7 @@ MouseOutHandler, MouseWheelHandler {
     				break;
     			}
     		String line = new String(b, p, l-1);
-    		if (line.charAt(0) == '#')
+    		if (line.isEmpty() || line.charAt(0) == '#')
     			;
     		else if (line.charAt(0) == '+') {
     		//	MenuBar n = new Menu(line.substring(1));
@@ -4330,6 +4455,7 @@ MouseOutHandler, MouseWheelHandler {
     		return;
     	}
     	mouseSelect(e);
+    	scopeMenuSelected = -1;
     }
     
     // convert screen coordinates to grid coordinates by inverting circuit transform
@@ -4812,30 +4938,36 @@ MouseOutHandler, MouseWheelHandler {
     	else if (scopeSelected != -1 && !zoomOnly)
     	    scopes[scopeSelected].onMouseWheel(e);
     	else if (!dialogIsShowing()) {
-    	    zoomCircuit(-e.getDeltaY());
+    	    mouseCursorX=e.getX();
+    	    mouseCursorY=e.getY();
+    	    zoomCircuit(-e.getDeltaY(), false);
     	    zoomTime = System.currentTimeMillis();
    	}
     	repaint();
     }
 
-    void zoomCircuit(double dy) {
+    void zoomCircuit(double dy) { zoomCircuit(dy, false); }
+
+    void zoomCircuit(double dy, boolean menu) {
 	double newScale;
     	double oldScale = transform[0];
     	double val = dy*.01;
     	newScale = Math.max(oldScale+val, .2);
     	newScale = Math.min(newScale, 2.5);
-    	setCircuitScale(newScale);
+    	setCircuitScale(newScale, menu);
     }
     
-    void setCircuitScale(double newScale) {
-	int cx = inverseTransformX(circuitArea.width/2);
-	int cy = inverseTransformY(circuitArea.height/2);
+    void setCircuitScale(double newScale, boolean menu) {
+	int constX = !menu ? mouseCursorX : circuitArea.width/2;
+	int constY = !menu ? mouseCursorY : circuitArea.height/2;
+	int cx = inverseTransformX(constX);
+	int cy = inverseTransformY(constY);
 	transform[0] = transform[3] = newScale;
 
 	// adjust translation to keep center of screen constant
 	// inverse transform = (x-t4)/t0
-	transform[4] = circuitArea.width /2 - cx*newScale;
-	transform[5] = circuitArea.height/2 - cy*newScale;
+	transform[4] = constX - cx*newScale;
+	transform[5] = constY - cy*newScale;
     }
     
     void setPowerBarEnable() {
@@ -5360,7 +5492,7 @@ MouseOutHandler, MouseWheelHandler {
 			    setMouseMode(MODE_SELECT);
 			    mouseModeStr = "Select";
 			    tempMouseMode = mouseMode;
-			    e.cancel();    			
+			e.cancel();
     		}
     	}
     }
@@ -5634,6 +5766,12 @@ MouseOutHandler, MouseWheelHandler {
     	case 422: return new DelayBufferElm(x1, y1, x2, y2, f, st);
     	case 423: return new LineElm(x1, y1, x2, y2, f, st);
     	case 424: return new DataInputElm(x1, y1, x2, y2, f, st);
+    	case 425: return new RelayCoilElm(x1, y1, x2, y2, f, st);
+    	case 426: return new RelayContactElm(x1, y1, x2, y2, f, st);
+    	case 427: return new ThreePhaseMotorElm(x1, y1, x2, y2, f, st);
+    	case 428: return new MotorProtectionSwitchElm(x1, y1, x2, y2, f, st);
+    	case 429: return new DPDTSwitchElm(x1, y1, x2, y2, f, st);
+    	case 430: return new CrossSwitchElm(x1, y1, x2, y2, f, st);
         }
     	return null;
     }
@@ -5703,6 +5841,12 @@ MouseOutHandler, MouseWheelHandler {
     		return (CircuitElm) new TransLineElm(x1, y1);
     	if (n=="RelayElm")
     		return (CircuitElm) new RelayElm(x1, y1);
+    	if (n=="RelayCoilElm")
+    		return (CircuitElm) new RelayCoilElm(x1, y1);
+    	if (n=="RelayContactElm")
+    		return (CircuitElm) new RelayContactElm(x1, y1);
+    	if (n=="ThreePhaseMotorElm")
+    		return (CircuitElm) new ThreePhaseMotorElm(x1, y1);
     	if (n=="MemristorElm")
     		return (CircuitElm) new MemristorElm(x1, y1);
     	if (n=="SparkGapElm")
@@ -5898,6 +6042,12 @@ MouseOutHandler, MouseWheelHandler {
 		return (CircuitElm) new DelayBufferElm(x1, y1);
     	if (n=="DataInputElm")
 		return (CircuitElm) new DataInputElm(x1, y1);
+    	if (n=="MotorProtectionSwitchElm")
+		return (CircuitElm) new MotorProtectionSwitchElm(x1, y1);
+    	if (n=="DPDTSwitchElm")
+		return (CircuitElm) new DPDTSwitchElm(x1, y1);
+    	if (n=="CrossSwitchElm")
+		return (CircuitElm) new CrossSwitchElm(x1, y1);
     	
     	// handle CustomCompositeElm:modelname
     	if (n.startsWith("CustomCompositeElm:")) {
@@ -6152,6 +6302,10 @@ MouseOutHandler, MouseWheelHandler {
 	    CustomLogicModel.clearDumpedFlags();
 	    DiodeModel.clearDumpedFlags();
 	    TransistorModel.clearDumpedFlags();
+            Vector<LabeledNodeElm> sideLabels[] = new Vector[] {
+                new Vector<LabeledNodeElm>(), new Vector<LabeledNodeElm>(),
+                new Vector<LabeledNodeElm>(), new Vector<LabeledNodeElm>()
+            };
 	    Vector<ExtListEntry> extList = new Vector<ExtListEntry>();
 	    boolean sel = isSelection();
 	    
@@ -6173,13 +6327,30 @@ MouseOutHandler, MouseWheelHandler {
 		    if (extnodes[ce.getNode(0)])
 			continue;
 		    
+                    int side = ChipElm.SIDE_W;
+                    if (Math.abs(ce.dx) >= Math.abs(ce.dy) && ce.dx > 0) side = ChipElm.SIDE_E;
+                    if (Math.abs(ce.dx) <= Math.abs(ce.dy) && ce.dy < 0) side = ChipElm.SIDE_N;
+                    if (Math.abs(ce.dx) <= Math.abs(ce.dy) && ce.dy > 0) side = ChipElm.SIDE_S;
+                    
 		    // create ext list entry for external nodes
-		    ExtListEntry ent = new ExtListEntry(label, ce.getNode(0));
-		    extList.add(ent);
+                    sideLabels[side].add(lne);
 		    extnodes[ce.getNode(0)] = true;
 		}
 	    }
 	    
+            Collections.sort(sideLabels[ChipElm.SIDE_W], (LabeledNodeElm a, LabeledNodeElm b) -> Integer.signum(a.y - b.y));
+            Collections.sort(sideLabels[ChipElm.SIDE_E], (LabeledNodeElm a, LabeledNodeElm b) -> Integer.signum(a.y - b.y));
+            Collections.sort(sideLabels[ChipElm.SIDE_N], (LabeledNodeElm a, LabeledNodeElm b) -> Integer.signum(a.x - b.x));
+            Collections.sort(sideLabels[ChipElm.SIDE_S], (LabeledNodeElm a, LabeledNodeElm b) -> Integer.signum(a.x - b.x));
+
+            for (int side = 0; side < sideLabels.length; side++) {
+                for (int pos = 0; pos < sideLabels[side].size(); pos++) {
+                    LabeledNodeElm lne = sideLabels[side].get(pos);
+                    ExtListEntry ent = new ExtListEntry(lne.text, lne.getNode(0), pos, side);
+                    extList.add(ent);
+                }
+            }
+
 	    // output all the elements
 	    for (i = 0; i != elmList.size(); i++) {
 		CircuitElm ce = getElm(i);
@@ -6307,7 +6478,10 @@ MouseOutHandler, MouseWheelHandler {
 	        setSimRunning: $entry(function(run) { that.@com.lushprojects.circuitjs1.client.CirSim::setSimRunning(Z)(run); } ),
 	        getTime: $entry(function() { return that.@com.lushprojects.circuitjs1.client.CirSim::t; } ),
 	        getTimeStep: $entry(function() { return that.@com.lushprojects.circuitjs1.client.CirSim::timeStep; } ),
-	        setTimeStep: $entry(function(ts) { that.@com.lushprojects.circuitjs1.client.CirSim::timeStep = ts; } ),
+	        setTimeStep: $entry(function(ts) { that.@com.lushprojects.circuitjs1.client.CirSim::timeStep = ts; } ), // don't use this, see #843
+	        getMaxTimeStep: $entry(function() { return that.@com.lushprojects.circuitjs1.client.CirSim::maxTimeStep; } ),
+	        setMaxTimeStep: $entry(function(ts) { that.@com.lushprojects.circuitjs1.client.CirSim::maxTimeStep = 
+                                                      that.@com.lushprojects.circuitjs1.client.CirSim::timeStep = ts; } ),
 	        isRunning: $entry(function() { return that.@com.lushprojects.circuitjs1.client.CirSim::simIsRunning()(); } ),
 	        getNodeVoltage: $entry(function(n) { return that.@com.lushprojects.circuitjs1.client.CirSim::getLabeledNodeVoltage(Ljava/lang/String;)(n); } ),
 	        setExtVoltage: $entry(function(n, v) { that.@com.lushprojects.circuitjs1.client.CirSim::setExtVoltage(Ljava/lang/String;D)(n, v); } ),
